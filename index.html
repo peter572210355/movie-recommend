@@ -1,111 +1,154 @@
 <!doctype html>
 <html lang="zh-Hant">
-<meta charset="utf-8">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>電影相似度推薦 Demo</title>
+
 <style>
-  body { font-family: Arial; margin: 2rem; }
-  input { padding: .5rem; width: 300px; }
-  .card { border: 1px solid #ddd; padding: 1rem; margin: .5rem 0; border-radius: 8px; }
+  :root { --muted:#666; --border:#e5e7eb; }
+  body { font-family: system-ui,-apple-system,"PingFang TC",Segoe UI,Arial; margin: 2rem; }
+  h1 { margin: 0 0 .75rem; }
+  .bar { display:flex; gap:.5rem; margin:.5rem 0 0; }
+  input { flex:1; padding:.6rem .8rem; font-size:16px; border:1px solid var(--border); border-radius:10px; }
+  button { padding:.6rem 1rem; font-size:16px; border:1px solid var(--border); border-radius:10px; cursor:pointer; background:#fff; }
+  #status { margin:.5rem 0; color: var(--muted); }
+  .hint { color: var(--muted); font-size: 14px; margin:.25rem 0 .75rem; }
+  .card { border:1px solid var(--border); border-radius:12px; padding:1rem; margin:.6rem 0; box-shadow:0 2px 6px rgba(0,0,0,.04); }
+  .muted { color: var(--muted); }
+  ul.suggest { margin:.5rem 0; padding-left:1.2rem; }
+  ul.suggest li { cursor:pointer; margin:.2rem 0; }
+  .score { color: var(--muted); font-variant-numeric: tabular-nums; }
 </style>
 
 <h1>🎬 電影相似度推薦</h1>
-<input id="q" placeholder="輸入電影名稱，例如 Avatar">
-<button onclick="search()">搜尋</button>
-<!-- ✅ 在這裡加狀態提示 -->
-<div id="status" style="margin:.5rem 0; color:#666;">資料載入中…</div>
+<div class="bar">
+  <input id="q" placeholder="輸入電影名稱，例如 Avatar / Interstellar / The Matrix">
+  <button id="go">搜尋</button>
+</div>
+<div id="status">資料載入中…</div>
+<div class="hint">提示：支援大小寫忽略、部分比對；找不到會列出候選片名。</div>
+
 <div id="results"></div>
 
 <script>
-let MOV = [], SIM = {};
+let MOV = [];      // movies.json 的陣列，每筆至少含 {id, title, overview}
+let SIM = {};      // similar.json 的物件，key=字串化的 id，value= [{title, score}, ...]
 let READY = false;
+
+// 工具：安全取字串 & 小寫
+const lower = s => (s || "").toString().trim().toLowerCase();
 
 async function boot(){
   try {
-    const mj = await fetch("movies.json");
-    const sj = await fetch("similar.json");
-    if (!mj.ok || !sj.ok) throw new Error("JSON 載入失敗");
+    const [mj, sj] = await Promise.all([
+      fetch("movies.json", {cache:"no-store"}),
+      fetch("similar.json", {cache:"no-store"})
+    ]);
+    if(!mj.ok || !sj.ok) throw new Error("JSON 載入失敗，請確認兩個檔案與 index.html 同層。");
 
     MOV = await mj.json();
     SIM = await sj.json();
     READY = true;
 
+    // 附加每筆的陣列索引（必要時可用）
+    MOV.forEach((m, i) => { m.__idx = i; });
+
+    document.getElementById("status").textContent = `✅ 資料載入完成：${MOV.length} 筆`;
     console.log("[DEBUG] MOV length =", MOV.length);
     console.log("[DEBUG] First 5 titles =", MOV.slice(0,5).map(m=>m.title));
-    document.getElementById("status").textContent = `資料載入完成：${MOV.length} 筆`;
   } catch (err) {
     console.error(err);
-    document.getElementById("status").textContent = "❌ 資料載入失敗，請確認 movies.json / similar.json 路徑與內容。";
+    document.getElementById("status").textContent = "❌ 資料載入失敗：請檢查 movies.json / similar.json 路徑與內容。";
   }
 }
 
+function pickMovieByTitle(query){
+  const q = lower(query);
+  if(!q) return null;
+  // 先模糊包含
+  const candidates = MOV.filter(m => lower(m.title).includes(q));
+  if(candidates.length === 0) return {movie:null, candidates:[]};
+  // 優先完全相等（忽略大小寫）
+  const exact = candidates.find(m => lower(m.title) === q);
+  return { movie: exact || candidates[0], candidates };
+}
+
+function renderSuggestions(list){
+  const html = `
+    <div class="card">
+      <div class="muted" style="margin-bottom:.25rem">可能想找：</div>
+      <ul class="suggest">
+        ${list.slice(0,10).map(m => `<li data-title="${m.title.replace(/"/g,'&quot;')}">${m.title}</li>`).join("")}
+      </ul>
+    </div>`;
+  const box = document.getElementById("results");
+  box.innerHTML += html;
+  // 綁定點擊：點候選直接帶入搜尋欄並查詢
+  box.querySelectorAll("ul.suggest li").forEach(li=>{
+    li.addEventListener("click", ()=>{
+      const t = li.getAttribute("data-title");
+      document.getElementById("q").value = t;
+      search();
+    });
+  });
+}
+
 function search(){
-  if (!READY){
-    document.getElementById("results").innerHTML = "⌛ 資料還在載入，等一下再試。";
+  if(!READY){
+    document.getElementById("results").innerHTML = "⌛ 資料還在載入，請稍候。";
     return;
   }
+  const input = document.getElementById("q").value;
+  const { movie, candidates } = pickMovieByTitle(input);
 
-  const q = document.getElementById("q").value.trim().toLowerCase();
-  if (!q){
-    document.getElementById("results").innerHTML = "請輸入片名關鍵字";
-    return;
-  }
-
-  // 模糊＋大小寫忽略
-  const candidates = MOV.filter(m => (m.title || "").toLowerCase().includes(q));
-
-  // 1) 若剛好只找到一部，直接用它
-  let movie = null;
-  if (candidates.length === 1){
-    movie = candidates[0];
-  } else if (candidates.length > 1){
-    // 2) 多個候選：先嘗試完全相等，其次用第一個候選
-    movie = candidates.find(m => m.title.toLowerCase() === q) || candidates[0];
-  }
-
-  if (!movie){
-    // 找不到 → 顯示前 10 個可能的片名（用 includes 做寬鬆比對）
-    const sugg = MOV
-      .filter(m => (m.title || "").toLowerCase().includes(q[0] || ""))
-      .slice(0,10)
-      .map(m => `<li>${m.title}</li>`)
-      .join("");
-
+  if(!movie){
+    const firstLetter = lower(input).slice(0,1);
+    const fallback = firstLetter
+      ? MOV.filter(m => lower(m.title).startsWith(firstLetter)).slice(0,10)
+      : MOV.slice(0,10);
     document.getElementById("results").innerHTML =
-      `❌ 找不到這部電影：<b>${q}</b><br>
-       <div style="margin-top:.5rem">可能想找：</div>
-       <ul>${sugg || "<li>(無候選，請換關鍵字)</li>"}</ul>`;
-
-    console.log("[DEBUG] query=", q, "candidates.length=", candidates.length);
+      `<div class="card">❌ 找不到：<b>${input || "(空白)"}</b></div>`;
+    renderSuggestions(candidates.length ? candidates : fallback);
     return;
   }
 
-  // 取得相似清單：注意 similar.json 的 key 可能是字串 id
-  const simKey = String(movie.id);
-  const sims = SIM[simKey] || [];
-  console.log("[DEBUG] chosen movie =", movie, "simKey=", simKey, "sims.length=", sims.length);
+  const simKey = String(movie.id); // 🔑 用 id 對齊 similar.json 的 key
+  const sims = Array.isArray(SIM[simKey]) ? SIM[simKey] : [];
 
-  let html = `<h2>「${movie.title}」的相似電影</h2>`;
-  if (sims.length === 0){
-    html += `<div>（這部電影在 similar.json 裡沒有相似清單，請確認相似度檔案的 key 是否用 <code>id</code> 而不是索引。）</div>`;
+  let html = `
+    <div class="card">
+      <div><b>基準電影：</b> ${movie.title} <span class="muted">#${movie.id}</span></div>
+      ${movie.overview ? `<div class="muted" style="margin-top:.5rem">${movie.overview}</div>` : ""}
+    </div>
+    <h3>相似電影</h3>
+  `;
+
+  if(sims.length === 0){
+    html += `<div class="card">（這部電影在 <code>similar.json</code> 沒有相似清單。請確認輸出時用 <b>id</b> 當 key，例如 "<code>${movie.id}</code>"。）</div>`;
   } else {
     html += sims.map(s => `
       <div class="card">
-        <b>${s.title}</b> <span style="color:#666">score: ${Number(s.score).toFixed(3)}</span>
+        <b>${s.title}</b> <span class="score">score: ${Number(s.score).toFixed(3)}</span>
       </div>
     `).join("");
   }
   document.getElementById("results").innerHTML = html;
+
+  // 如果一開始就有多個候選，再附上建議清單方便切換
+  if (candidates && candidates.length > 1) {
+    renderSuggestions(candidates);
+  }
 }
 
-// 事件
+// 綁定事件
 document.getElementById("go").addEventListener("click", search);
-document.getElementById("q").addEventListener("keydown", e => { if (e.key === "Enter") search(); });
+document.getElementById("q").addEventListener("keydown", e => { if(e.key === "Enter") search(); });
 
 // 啟動
 boot();
 </script>
-
 </html>
+
 
 
 

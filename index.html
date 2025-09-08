@@ -21,19 +21,23 @@ async function boot(){
   SIM = await (await fetch("similar.json")).json();
 }
 function search(){
-  const q = document.getElementById("q").value.trim();
-  const movie = MOV.find(m => m.title === q);
+  const q = document.getElementById("q").value.trim().toLowerCase();
+  const movie = MOV.find(m => m.title.toLowerCase().includes(q));  // ← 模糊搜尋
   if(!movie){ document.getElementById("results").innerHTML = "❌ 找不到這部電影"; return; }
 
   const sims = SIM[movie.id] || [];
   let html = `<h2>「${movie.title}」的相似電影</h2>`;
   sims.forEach(s=>{
-    html += `<div class="card"><b>${s.title}</b> (score: ${s.score.toFixed(3)})</div>`;
+    html += `<div class="card"><b>${s.title}</b> (score: ${s.score})</div>`;
   });
+  document.getElementById("results").innerHTML = html;
+}
+);
   document.getElementById("results").innerHTML = html;
 }
 boot();
 </script>
 </html>
+
 
 

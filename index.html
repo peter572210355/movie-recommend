@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<title>電影相似度推薦 Demo</title>
+<style>
+  body { font-family: Arial; margin: 2rem; }
+  input { padding: .5rem; width: 300px; }
+  .card { border: 1px solid #ddd; padding: 1rem; margin: .5rem 0; border-radius: 8px; }
+</style>
+
+<h1>🎬 電影相似度推薦</h1>
+<input id="q" placeholder="輸入電影名稱，例如 Avatar">
+<button onclick="search()">搜尋</button>
+<div id="results"></div>
+
+<script>
+let MOV = [], SIM = {};
+
+async function boot(){
+  MOV = await (await fetch("movies.json")).json();
+  SIM = await (await fetch("similar.json")).json();
+}
+function search(){
+  const q = document.getElementById("q").value.trim();
+  const movie = MOV.find(m => m.title === q);
+  if(!movie){ document.getElementById("results").innerHTML = "❌ 找不到這部電影"; return; }
+
+  const sims = SIM[movie.id] || [];
+  let html = `<h2>「${movie.title}」的相似電影</h2>`;
+  sims.forEach(s=>{
+    html += `<div class="card"><b>${s.title}</b> (score: ${s.score.toFixed(3)})</div>`;
+  });
+  document.getElementById("results").innerHTML = html;
+}
+boot();
+</script>
+</html>
+
+
